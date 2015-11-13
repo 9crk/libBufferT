@@ -1,3 +1,8 @@
+/***********************************************************************
+Author: 9crk 2015-11-13 in ShenZhen
+All right reserved.
+mail:admin@9crk.com
+***********************************************************************/
 #include <sys/shm.h>  
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,12 +37,15 @@ extern int zfifo_readEx(char* handle, char* data, unsigned int datalen);
 extern int zfifo_write(char* handle, char* data, unsigned int length);
 extern int zfifo_check(char *handle);
 extern int zfifo_clear(char* handle);
+extern int zfifo_clearA(char* handle);
 
 int zfifo_init(char** handle, unsigned int len)
 {
 		zfifo *p = malloc(sizeof(zfifo));
+		if(p==NULL){printf("TaiHenDa!!\n");}
 		memset((void*)p, 0, sizeof(zfifo));
 		p->buffer = (char*)malloc(len);
+		if(p->buffer==NULL){printf("TaiHenDa!!\n");}
 		p->dataLen = len;
 		p->allowWrite = TRUE;
 		*handle = (char*)p;
@@ -66,7 +74,7 @@ int zfifo_read(char* handle, char* data, unsigned int datalen)
 			memcpy(data, circleBuf->buffer + readIndex, writeIndex - readIndex);
 			circleBuf->readIndex = writeIndex;
 			circleBuf->allowWrite = TRUE;
-			printf("no data...\n");
+			//printf("no data...\n");
 			ret = writeIndex - readIndex;
 		}
 	}else if (readIndex > writeIndex){
@@ -81,7 +89,7 @@ int zfifo_read(char* handle, char* data, unsigned int datalen)
 				circleBuf->readIndex = readIndex + datalen - circleBuf->dataLen;
 				ret = datalen;
 			}else{											  //--w----l--------------------------r---
-				printf("no data...\n");			
+				//printf("no data...\n");			
 				circleBuf->allowWrite = TRUE;
 				memcpy(data, circleBuf->buffer + readIndex, circleBuf->dataLen - readIndex);
 				memcpy(data + circleBuf->dataLen - readIndex, circleBuf->buffer, writeIndex);
@@ -115,7 +123,7 @@ int zfifo_readEx(char* handle, char* data, unsigned int datalen)
 			//memcpy(data, circleBuf->buffer + readIndex, writeIndex - readIndex);
 			//circleBuf->readIndex = writeIndex;
 			//circleBuf->allowWrite = TRUE;
-			printf("no data...\n");
+			//printf("no data...\n");
 			ret = 0;//writeIndex - readIndex;
 		}
 	}else if (readIndex > writeIndex){
@@ -130,7 +138,7 @@ int zfifo_readEx(char* handle, char* data, unsigned int datalen)
 				circleBuf->readIndex = readIndex + datalen - circleBuf->dataLen;
 				ret = datalen;
 			}else{											  //--w----l--------------------------r---
-				printf("no data...\n");			
+				//printf("no data...\n");			
 				//circleBuf->allowWrite = TRUE;
 				//memcpy(data, circleBuf->buffer + readIndex, circleBuf->dataLen - readIndex);
 				//memcpy(data + circleBuf->dataLen - readIndex, circleBuf->buffer, writeIndex);
@@ -148,7 +156,7 @@ int zfifo_readEx(char* handle, char* data, unsigned int datalen)
 int zfifo_write(char* handle, char* data, unsigned int length)
 {
 	int writeIndex,readIndex;
-	int ret;
+	int ret=0;
 	zfifo* circleBuf = (zfifo*)handle;
 	pthread_mutex_lock(&circleBuf->mutex);
 	
@@ -157,7 +165,7 @@ int zfifo_write(char* handle, char* data, unsigned int length)
 	
 	if (writeIndex >= readIndex){
 		if (writeIndex == readIndex && circleBuf->allowWrite == FALSE){
-			printf("full, r==w\n");
+			//printf("full, r==w\n");
 			ret = 0;
 		}
 		if ((writeIndex + length) > circleBuf->dataLen){				
@@ -167,7 +175,7 @@ int zfifo_write(char* handle, char* data, unsigned int length)
 				circleBuf->writeIndex = writeIndex + length - circleBuf->dataLen;
 				ret = length;
 			}else{													//---r--l---------------------w-
-				printf("full, w+l > r\n");
+				//printf("full, w+l > r\n");
 				ret = 0;
 			}
 		}else{														//-----r-----------------w----l--
@@ -177,7 +185,7 @@ int zfifo_write(char* handle, char* data, unsigned int length)
 		}
 	}else if (writeIndex < readIndex){								
 		if (writeIndex + length >= readIndex){						//------------w--r--l-----------应当丢失，报错，返回0
-			printf("full, w+l > r\n");
+			//printf("full, w+l > r\n");
 			ret = 0;
 		}else{														//------------w---l---r----------正常，返回l
 			memcpy(circleBuf->buffer + writeIndex, data, length);
@@ -186,6 +194,7 @@ int zfifo_write(char* handle, char* data, unsigned int length)
 		}
 	}
 	pthread_mutex_unlock(&circleBuf->mutex);
+	
 	return ret;
 }
 int zfifo_check(char *handle)
@@ -194,7 +203,7 @@ int zfifo_check(char *handle)
 	zfifo* p = (zfifo*)handle;
 	int write = p->writeIndex;
 	int read = p->readIndex;
-	if(write > read)len = write - read;
+	if(write >= read)len = write - read;
 	else{
 		len = p->dataLen - (read - write);
 	}
@@ -210,7 +219,49 @@ int zfifo_clear(char* handle)
 	pthread_mutex_unlock(&circleBuf->mutex);
 	return 0;
 }
-
+int zfifo_clearA(char* handle)
+{
+	zfifo* circleBuf = (zfifo*)handle;
+	pthread_mutex_lock(&circleBuf->mutex);
+	//read from writeIndex to readIndex while the data == 0x11111 then stop 
+	int writepos = circleBuf->writeIndex;
+	int readpos = circleBuf->readIndex;
+	int all = circleBuf->dataLen;
+	int i;
+	char header[2];
+	if(writepos >= readpos){
+		for(i=writepos;i>(readpos+1);i--){
+			header[0] = circleBuf->buffer[i-1];
+			header[1] = circleBuf->buffer[i];
+			if (header[0] == 0xFF && header[1]  == 0xF1){
+				circleBuf->readIndex = i-1;
+				break;
+			}			
+		}
+	}else{
+		for(i=writepos;i>1;i--){
+			header[0] = circleBuf->buffer[i-1];
+			header[1] = circleBuf->buffer[i];
+			if (header[0] == 0xFF && header[1]  == 0xF1){
+				circleBuf->readIndex = i-1;
+				break;
+			}
+		}
+		for(i=all;i>readpos+1;i--){
+			header[0] = circleBuf->buffer[i-1];
+			header[1] = circleBuf->buffer[i];
+			if (header[0] == 0xFF && header[1]  == 0xF1){
+				circleBuf->readIndex = i-1;
+				break;
+			}			
+		}
+	}
+	circleBuf->allowWrite = TRUE;
+	printf("clear = %02x %02x\n",circleBuf->buffer[circleBuf->readIndex],circleBuf->buffer[circleBuf->readIndex+1]);
+	pthread_mutex_unlock(&circleBuf->mutex);
+	return 0;
+}
+/*
 
 int main(int argc, char* argv[])
 {
@@ -222,4 +273,4 @@ int main(int argc, char* argv[])
 	data[19] = '\0';
 	printf("%s",data);
 	zfifo_destroy(buff);
-}
+}*/
